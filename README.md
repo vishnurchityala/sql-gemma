@@ -45,3 +45,5 @@ Whereas Instruction LLM model is a Base LLM finetuned on instructions data where
 - https://github.com/adithya-s-k/AI-Engineering.academy/tree/main/archives
 - https://huggingface.co/google/gemma-3-270m-it
 - https://huggingface.co/datasets/gretelai/synthetic_text_to_sql
+- https://huggingface.co/blog/gemma-peft
+- https://github.com/google-gemini/gemma-cookbook/tree/main/Gemma
