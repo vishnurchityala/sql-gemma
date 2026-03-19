@@ -1,3 +1,6 @@
+"""
+This file is to create Gemma LLM model.
+"""
 import keras_hub
 from ..utils import load_kaggle_credentials
 

@@ -1,3 +1,6 @@
+"""
+This file is to fetch kaggle credentials and seed them in enviornment for Gemma model use.
+"""
 import os
 import json
 
