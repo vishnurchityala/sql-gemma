@@ -1,67 +1,87 @@
 """
-Train Gemma-270M on Training Dataset with AdamW
+Train Gemma on Training Dataset with Transformers and PEFT
 """
-import keras
-import tensorflow as tf
+
+import torch
+from transformers import TrainingArguments, Trainer
+
 from src.data_loaders.sql_data_loader import get_data_loader
 from src.models.gemma_model_loader import get_gemma_model
 
-# Load Dataset and Gemma Model
-train_dataset = get_data_loader(split="train")
-test_dataset = get_data_loader(split="test")
-gemma_lm = get_gemma_model()
+# Load Dataset
+dataset = get_data_loader()
 
-# Generating Pre-Finetuning Response
-dummy = tf.constant(["Write a SQL Query to fetch all records from Products table"])
-dummy_response = gemma_lm.generate(dummy)
-print("Dummy Response Before Fine-Tuning:")
-print(dummy_response)
+# Load Model + Tokenizer
+tokenizer, model = get_gemma_model(return_tokenizer=True)
 
-# Finetuning Configuration
-gemma_lm.backbone.enable_lora(rank=4)
-gemma_lm.preprocessor.sequence_length = 256
+# Tokenization
+def tokenize(example):
+    tokenized = tokenizer(
+        example["text"],
+        truncation=True,
+        padding="max_length",
+        max_length=256,
+    )
+    tokenized["labels"] = [
+        [token if token != tokenizer.pad_token_id else -100 for token in row]
+        for row in tokenized["input_ids"]
+    ]
+    return tokenized
 
-optimizer = keras.optimizers.AdamW(
+
+tokenized_dataset = dataset.map(tokenize, batched=True)
+
+# Training Config
+training_args = TrainingArguments(
+    output_dir="./results",
+    per_device_train_batch_size=2,
+    num_train_epochs=3,
     learning_rate=2e-5,
-    weight_decay=0.01,
+    logging_steps=10,
+    save_steps=100,
+    fp16=False,
+    dataloader_pin_memory=False,
 )
 
-optimizer.exclude_from_weight_decay(
-    var_names=["bias", "scale"]
+# Trainer
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    train_dataset=tokenized_dataset["train"],
+    eval_dataset=tokenized_dataset["test"],
 )
 
-gemma_lm.compile(
-    optimizer=optimizer,
-    loss=keras.losses.SparseCategoricalCrossentropy(from_logits=True),
-    weighted_metrics=[keras.metrics.SparseCategoricalAccuracy()],
-)
+# Train
+trainer.train()
 
-# Training Loop
-history = gemma_lm.fit(
-    train_dataset,
-    validation_data=test_dataset,
-    epochs=1
-)
+# Save Fine-Tuned Model
+save_path = "./fine_tuned_gemma_sql"
+model.save_pretrained(save_path)
+tokenizer.save_pretrained(save_path)
 
-# Post-Finetuning Model Testing
-template = """Instruction:
-{instruction}
+# Inference
+def generate_sql(prompt):
+    device = next(model.parameters()).device
+    inputs = tokenizer(prompt, return_tensors="pt").to(device)
 
-Response:
-"""
+    outputs = model.generate(
+        **inputs,
+        max_new_tokens=100,
+        do_sample=True,
+        top_k=5,
+    )
 
-prompt = template.format(
-    instruction="""Context:
+    return tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+
+# Test Prompt
+prompt = """Context:
 Table: employees(id, name, salary)
 
 Question:
 Find employees with salary greater than 50000
 
-Write a SQL query."""
-)
+Write a SQL query:
+"""
 
-output = gemma_lm.generate(prompt, max_length=200)
-print(output)
-
-# Saving LoRA Weights
-gemma_lm.backbone.save_lora_weights("weights/gemma_sql_lora.lora.h5")
+print(generate_sql(prompt))

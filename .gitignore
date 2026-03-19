@@ -65,3 +65,5 @@ maildir
 .DS_Store
 
 kaggle.json
+
+.env

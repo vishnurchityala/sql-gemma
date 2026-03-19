@@ -6,14 +6,18 @@ Step 2: Parse them to desired input for LLM Finetuning
 Step 3: Save the dataset as csv file
 """
 
+from .load_hf_token import load_hf_token
+
 def load_save_dataset(train_path:str="train_data.tsv",test_path:str="test_data.tsv") -> None:
 
     # Loading the dataset
     import csv
     from datasets import load_dataset
 
-    train_ds = load_dataset("gretelai/synthetic_text_to_sql",split="train")
-    test_ds = load_dataset("gretelai/synthetic_text_to_sql",split="test")
+    hf_token = load_hf_token()
+
+    train_ds = load_dataset("gretelai/synthetic_text_to_sql",split="train", token=hf_token)
+    test_ds = load_dataset("gretelai/synthetic_text_to_sql",split="test", token=hf_token)
 
     # Iterating over whole dataset and collecting training and testing data rows
     it = iter(train_ds)
