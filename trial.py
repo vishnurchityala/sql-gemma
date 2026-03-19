@@ -1,18 +1,30 @@
 """
-Loading hugging face data-set for SQL Queries.
+Loading and Saving Dataset in TSV format
 """
-# from datasets import load_dataset
+# from src.utils import load_save_dataset
 
-# ds = load_dataset("gretelai/synthetic_text_to_sql")
+# load_save_dataset("./data/train_data.tsv","./data/test_data.tsv")
 
-# train_ds = ds["train"]
-# test_ds = ds["test"]
+# import pandas as pd
 
-# print(f"Training data length: {len(train_ds)}")
-# print("Training Samples: ")
-# for key, value in train_ds[0].items():
-#     print(f"{key} : {value}")
-# print(f"Testing dataset length: {len(test_ds)}")
-# print("Testing Samples: ")
-# for key, value in test_ds[0].items():
-#     print(f"{key} : {value}")
+# data = pd.read_csv("./data/train_data.tsv",sep="\t")
+
+""" Test Script Saving Kaggle Credentials in Env"""
+# import os
+# import json
+# with open('kaggle.json') as f:
+#     creds = json.load(f)
+# os.environ['KAGGLE_USERNAME'] = creds['username']
+# os.environ['KAGGLE_KEY'] = creds['key']
+
+""" Loading and Testing Tensorflow Dataset object"""
+# from src.data_loaders import sql_data_loader
+
+# sql_dataset = sql_data_loader.get_data_loader()
+
+# print(next(iter(sql_dataset)))
+
+""" Loading Gemma Model """
+from src.models.gemma_model_loader import get_gemma_model
+
+gemma_lm = get_gemma_model()

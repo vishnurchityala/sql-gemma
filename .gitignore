@@ -63,3 +63,5 @@ docs/_build/
 target/
 maildir
 .DS_Store
+
+kaggle.json
