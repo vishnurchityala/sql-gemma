@@ -1,60 +1,59 @@
 """
-This file loads the Gemma model with LoRA.
+Load the Unsloth Gemma model and tokenizer for SQL fine-tuning.
 """
 
-import torch
-from peft import LoraConfig, get_peft_model
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from unsloth import FastModel
+from unsloth.chat_templates import get_chat_template
+
 from ..utils import load_hf_token
 
+DEFAULT_MODEL_NAME = "unsloth/gemma-3-270m-it"
+DEFAULT_MAX_SEQ_LENGTH = 2048
+DEFAULT_RANDOM_STATE = 3407
+DEFAULT_LORA_RANK = 128
+DEFAULT_LORA_ALPHA = 128
+DEFAULT_TARGET_MODULES = [
+    "q_proj",
+    "k_proj",
+    "v_proj",
+    "o_proj",
+    "gate_proj",
+    "up_proj",
+    "down_proj",
+]
 
-def get_gemma_model(model_name: str = "google/gemma-3-270m-it", return_tokenizer: bool = False):
-    hf_token = load_hf_token()
 
-    try:
-        tokenizer = AutoTokenizer.from_pretrained(
-            model_name,
-            token=hf_token,
-        )
-    except Exception as exc:
-        raise RuntimeError(
-            "Could not load the Gemma tokenizer from Hugging Face. "
-            "Make sure your account has access to google/gemma-3-270m-it and, "
-            "if you are using a fine-grained token, enable access to public gated repositories."
-        ) from exc
-    tokenizer.pad_token = tokenizer.eos_token
+def get_gemma_model(
+    model_name: str = DEFAULT_MODEL_NAME,
+    max_seq_length: int = DEFAULT_MAX_SEQ_LENGTH,
+    load_in_4bit: bool = True,
+    full_finetuning: bool = False,
+    return_tokenizer: bool = False,
+):
+    load_hf_token()
 
-    try:
-        if torch.cuda.is_available():
-            model = AutoModelForCausalLM.from_pretrained(
-                model_name,
-                device_map="auto",
-                token=hf_token,
-            )
-        else:
-            model = AutoModelForCausalLM.from_pretrained(
-                model_name,
-                token=hf_token,
-            )
-            if torch.backends.mps.is_available():
-                model = model.to("mps")
-    except Exception as exc:
-        raise RuntimeError(
-            "Could not load the Gemma model from Hugging Face. "
-            "Confirm that you accepted the gated model access request on the model page and "
-            "that your HF token can read public gated repositories."
-        ) from exc
-
-    lora_config = LoraConfig(
-        r=4,
-        lora_alpha=16,
-        target_modules=["q_proj", "v_proj"],
-        lora_dropout=0.05,
-        bias="none",
-        task_type="CAUSAL_LM",
+    model, tokenizer = FastModel.from_pretrained(
+        model_name=model_name,
+        max_seq_length=max_seq_length,
+        load_in_4bit=load_in_4bit,
+        full_finetuning=full_finetuning,
     )
 
-    model = get_peft_model(model, lora_config)
+    model = FastModel.get_peft_model(
+        model,
+        r=DEFAULT_LORA_RANK,
+        target_modules=DEFAULT_TARGET_MODULES,
+        lora_alpha=DEFAULT_LORA_ALPHA,
+        lora_dropout=0,
+        bias="none",
+        use_gradient_checkpointing="unsloth",
+        random_state=DEFAULT_RANDOM_STATE,
+    )
+
+    tokenizer = get_chat_template(
+        tokenizer,
+        chat_template="gemma3",
+    )
 
     if return_tokenizer:
         return tokenizer, model

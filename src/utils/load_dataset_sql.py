@@ -1,53 +1,78 @@
 """
-This file is created to load and save the Traning prompts with Responses in csv file.
-
-Step 1: Load dataset from hugging face
-Step 2: Parse them to desired input for LLM Finetuning
-Step 3: Save the dataset as csv file
+Utilities for loading and formatting the SQL fine-tuning dataset.
 """
 
-from .load_hf_token import load_hf_token
+from datasets import Dataset, load_dataset
 
-def load_save_dataset(train_path:str="train_data.tsv",test_path:str="test_data.tsv") -> None:
-
-    # Loading the dataset
-    import csv
-    from datasets import load_dataset
-
-    hf_token = load_hf_token()
-
-    train_ds = load_dataset("gretelai/synthetic_text_to_sql",split="train", token=hf_token)
-    test_ds = load_dataset("gretelai/synthetic_text_to_sql",split="test", token=hf_token)
-
-    # Iterating over whole dataset and collecting training and testing data rows
-    it = iter(train_ds)
-    train_data = [['id','context','prompt','response','explanation']]
-    try:
-        while True:
-            record = next(it)
-            record_row = [record['id'],record["sql_context"],record["sql_prompt"],record["sql"],record["sql_explanation"]]
-            train_data.append(record_row)
-    except StopIteration:
-        pass
-
-    it = iter(test_ds)
-    test_data = [['id','context','prompt','response','explanation']]
-    try:
-        while True:
-            record = next(it)
-            record_row = [record['id'],record["sql_context"],record["sql_prompt"],record["sql"],record["sql_explanation"]]
-            test_data.append(record_row)
-    except StopIteration:
-        pass
+DEFAULT_DATASET_NAME = "gretelai/synthetic_text_to_sql"
+DEFAULT_SYSTEM_PROMPT = "You are an expert SQL query generator."
+DEFAULT_SEED = 3407
+DEFAULT_TRAIN_LIMIT = 10000
+DEFAULT_TEST_LIMIT = 2000
 
 
-    # Saving data rows in tsv files
-    with open(train_path,"w+") as f:
-        writer = csv.writer(f,delimiter='\t')
-        writer.writerows(train_data)
-        print(f"Saved {len(train_data)} Training Rows")
+def load_sql_dataset_split(
+    split: str,
+    limit: int | None = None,
+    seed: int = DEFAULT_SEED,
+    dataset_name: str = DEFAULT_DATASET_NAME,
+) -> Dataset:
+    dataset = load_dataset(dataset_name, split=split)
+    dataset = dataset.shuffle(seed=seed)
 
-    with open(test_path,"w+") as f:
-        writer = csv.writer(f,delimiter='\t')
-        writer.writerows(test_data)
-        print(f"Saved {len(test_data)} Testing Rows")
+    if limit is not None:
+        dataset = dataset.select(range(min(limit, len(dataset))))
+
+    return dataset
+
+
+def convert_to_chatml(
+    example: dict,
+    system_prompt: str = DEFAULT_SYSTEM_PROMPT,
+) -> dict:
+    return {
+        "conversations": [
+            {
+                "role": "system",
+                "content": system_prompt,
+            },
+            {
+                "role": "user",
+                "content": f"{example['sql_context']}\n\n{example['sql_prompt']}",
+            },
+            {
+                "role": "assistant",
+                "content": f"{example['sql']}\n\n{example['sql_explanation']}",
+            },
+        ]
+    }
+
+
+def formatting_prompts_func(examples: dict, tokenizer) -> dict:
+    convos = examples["conversations"]
+    texts = [
+        tokenizer.apply_chat_template(
+            convo,
+            tokenize=False,
+            add_generation_prompt=False,
+        ).removeprefix("<bos>")
+        for convo in convos
+    ]
+    return {"text": texts}
+
+
+def prepare_sql_dataset(
+    dataset: Dataset,
+    tokenizer,
+    system_prompt: str = DEFAULT_SYSTEM_PROMPT,
+) -> Dataset:
+    dataset = dataset.map(
+        convert_to_chatml,
+        fn_kwargs={"system_prompt": system_prompt},
+    )
+    dataset = dataset.map(
+        formatting_prompts_func,
+        batched=True,
+        fn_kwargs={"tokenizer": tokenizer},
+    )
+    return dataset

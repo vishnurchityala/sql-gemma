@@ -1,50 +1,37 @@
 """
-This file loads the SQL fine-tuning dataset.
+Load the SQL fine-tuning dataset in the chat format expected by Unsloth SFT.
 """
 
-from pathlib import Path
+from datasets import DatasetDict
 
-from datasets import load_dataset
-
-
-def format_example(example):
-    return {
-        "text": f"""Context:
-{example['context']}
-
-Question:
-{example['prompt']}
-
-Write a SQL query:
-{example['response']}"""
-    }
+from ..utils.load_dataset_sql import (
+    DEFAULT_SEED,
+    DEFAULT_TEST_LIMIT,
+    DEFAULT_TRAIN_LIMIT,
+    load_sql_dataset_split,
+    prepare_sql_dataset,
+)
 
 
-def _get_data_file(split):
-    if split == "train":
-        candidates = ["train.tsv", "data/train_data.tsv"]
-    else:
-        candidates = ["test.tsv", "data/test_data.tsv"]
-
-    for file_name in candidates:
-        if Path(file_name).exists():
-            return file_name
-
-    raise FileNotFoundError(f"Could not find a local {split} TSV file.")
-
-
-def get_data_loader(split=None, batch_size=2):
-    del batch_size
-
-    dataset = load_dataset(
-        "csv",
-        data_files={
-            "train": _get_data_file("train"),
-            "test": _get_data_file("test"),
-        },
-        delimiter="\t",
+def get_data_loader(
+    tokenizer,
+    split: str | None = None,
+    train_limit: int = DEFAULT_TRAIN_LIMIT,
+    test_limit: int = DEFAULT_TEST_LIMIT,
+    seed: int = DEFAULT_SEED,
+):
+    dataset = DatasetDict(
+        {
+            "train": prepare_sql_dataset(
+                load_sql_dataset_split("train", limit=train_limit, seed=seed),
+                tokenizer=tokenizer,
+            ),
+            "test": prepare_sql_dataset(
+                load_sql_dataset_split("test", limit=test_limit, seed=seed),
+                tokenizer=tokenizer,
+            ),
+        }
     )
-    dataset = dataset.map(format_example)
 
     if split is not None:
         return dataset[split]
