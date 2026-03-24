@@ -1,132 +1,139 @@
 """
 Train Gemma 3 270M on the SQL dataset with Unsloth SFT.
 """
-
-import matplotlib.pyplot as plt
-import pandas as pd
+import os
 import torch
-from transformers import TextStreamer
-from trl import SFTConfig, SFTTrainer
-from unsloth.chat_templates import train_on_responses_only
+from datasets import load_dataset
+from unsloth import FastModel
+from unsloth.chat_templates import get_chat_template, train_on_responses_only
+from trl import SFTTrainer, SFTConfig
+from peft import PeftModel
 
-from src.data_loaders.sql_data_loader import get_data_loader
-from src.models.gemma_model_loader import get_gemma_model
+max_seq_length = 1024
+output_lora = "./weights/gemma3_270m_sql_lora"
+output_full = "./weights/gemma3_270m_sql_full"
 
-OUTPUT_DIR = "outputs"
-LORA_OUTPUT_DIR = "gemma_3_270m_lora_sql"
-MERGED_OUTPUT_DIR = "gemma_3_270m_full_sql"
-TRAINING_CURVE_CSV = "training_curve.csv"
-TRAINING_CURVE_PNG = "training_curve.png"
-SAMPLE_INDEX = 10
+os.makedirs(output_lora, exist_ok=True)
+os.makedirs(output_full, exist_ok=True)
 
+model, tokenizer = FastModel.from_pretrained(
+    model_name="unsloth/gemma-3-270m-it",
+    max_seq_length=max_seq_length,
+    load_in_4bit=True,
+)
 
-def export_training_curve(log_history):
-    df = pd.DataFrame(log_history)
-    metric_columns = [column for column in ("step", "loss", "eval_loss") if column in df.columns]
+model = FastModel.get_peft_model(
+    model,
+    r=16,
+    target_modules=["q_proj","v_proj","o_proj"],
+    lora_alpha=32,
+    lora_dropout=0.05,
+    bias="none",
+    use_gradient_checkpointing="unsloth",
+)
 
-    if not metric_columns:
-        raise RuntimeError("Trainer logs did not contain any of the expected loss columns.")
+tokenizer = get_chat_template(
+    tokenizer,
+    chat_template="gemma3",
+)
 
-    df = df[metric_columns].dropna(how="all")
-    df.to_csv(TRAINING_CURVE_CSV, index=False)
+train_ds = load_dataset("gretelai/synthetic_text_to_sql", split="train")
+test_ds  = load_dataset("gretelai/synthetic_text_to_sql", split="test")
 
-    plt.figure()
+train_ds = train_ds.shuffle(seed=42).select(range(10000))
+test_ds  = test_ds.shuffle(seed=42).select(range(2000))
 
-    if "loss" in df.columns:
-        plt.plot(df["step"], df["loss"], label="Train Loss")
+def convert_to_chatml(example):
+    return {
+        "conversations": [
+            {
+                "role": "user",
+                "content": example["sql_context"] + "\n\n" + example["sql_prompt"]
+            },
+            {
+                "role": "assistant",
+                "content": example["sql"]
+            }
+        ]
+    }
 
-    if "eval_loss" in df.columns:
-        plt.plot(df["step"], df["eval_loss"], label="Eval Loss")
+train_ds = train_ds.map(convert_to_chatml, num_proc=2)
+test_ds  = test_ds.map(convert_to_chatml, num_proc=2)
 
-    plt.xlabel("Steps")
-    plt.ylabel("Loss")
-    plt.title("Training Curve")
-    plt.legend()
-    plt.savefig(TRAINING_CURVE_PNG)
-    plt.close()
-
-
-def run_sample_generation(model, tokenizer, dataset, sample_index: int = SAMPLE_INDEX):
-    sample_index = min(sample_index, len(dataset) - 1)
-    conversations = dataset["conversations"][sample_index]
-    messages = [
-        {"role": "system", "content": conversations[0]["content"]},
-        {"role": "user", "content": conversations[1]["content"]},
+def formatting_prompts_func(examples):
+    texts = [
+        tokenizer.apply_chat_template(
+            convo,
+            tokenize=False,
+            add_generation_prompt=False
+        ).removeprefix("<bos>")
+        for convo in examples["conversations"]
     ]
+    return {"text": texts}
 
-    text = tokenizer.apply_chat_template(
-        messages,
-        tokenize=False,
-        add_generation_prompt=True,
-    ).removeprefix("<bos>")
+train_ds = train_ds.map(formatting_prompts_func, batched=True, num_proc=2)
+test_ds  = test_ds.map(formatting_prompts_func, batched=True, num_proc=2)
 
-    device = next(model.parameters()).device
+trainer = SFTTrainer(
+    model=model,
+    tokenizer=tokenizer,
+    train_dataset=train_ds,
+    eval_dataset=test_ds,
+    args=SFTConfig(
+        dataset_text_field="text",
+        per_device_train_batch_size=4,
+        gradient_accumulation_steps=2,
+        packing=False,
+        num_train_epochs=1,
+        learning_rate=2e-4,
+        logging_steps=20,
+        eval_steps=200,
+        optim="adamw_8bit",
+        output_dir="./logs/",
+        report_to="none",
+    ),
+)
 
-    with torch.inference_mode():
-        _ = model.generate(
-            **tokenizer(text, return_tensors="pt").to(device),
-            max_new_tokens=150,
-            temperature=0.7,
-            top_p=0.9,
-            top_k=50,
-            streamer=TextStreamer(tokenizer, skip_prompt=True),
-        )
+trainer = train_on_responses_only(
+    trainer,
+    instruction_part="<start_of_turn>user\n",
+    response_part="<start_of_turn>model\n",
+)
 
+trainer.train()
 
-def main():
-    tokenizer, model = get_gemma_model(return_tokenizer=True)
-    dataset = get_data_loader(tokenizer=tokenizer)
+trainer.model.save_pretrained(output_lora)
+tokenizer.save_pretrained(output_lora)
 
-    trainer = SFTTrainer(
-        model=model,
-        tokenizer=tokenizer,
-        train_dataset=dataset["train"],
-        eval_dataset=dataset["test"],
-        args=SFTConfig(
-            dataset_text_field="text",
-            per_device_train_batch_size=4,
-            gradient_accumulation_steps=1,
-            warmup_steps=100,
-            num_train_epochs=2,
-            learning_rate=5e-5,
-            logging_steps=50,
-            eval_steps=500,
-            save_steps=500,
-            eval_strategy="steps",
-            save_strategy="steps",
-            optim="adamw_8bit",
-            weight_decay=0.001,
-            lr_scheduler_type="linear",
-            seed=3407,
-            output_dir=OUTPUT_DIR,
-            report_to="none",
-        ),
-    )
+print("LoRA adapter saved.")
 
-    trainer = train_on_responses_only(
-        trainer,
-        instruction_part="<start_of_turn>user\n",
-        response_part="<start_of_turn>model\n",
-    )
+base_model, tokenizer = FastModel.from_pretrained(
+    model_name="unsloth/gemma-3-270m-it",
+    max_seq_length=max_seq_length,
+    load_in_4bit=False,
+)
 
-    trainer.train()
+merged = PeftModel.from_pretrained(base_model, output_lora)
+merged = merged.merge_and_unload()
 
-    run_sample_generation(model, tokenizer, dataset["train"])
+merged.save_pretrained(output_full)
+tokenizer.save_pretrained(output_full)
 
-    model.save_pretrained(LORA_OUTPUT_DIR)
-    tokenizer.save_pretrained(LORA_OUTPUT_DIR)
+print("Full model saved.")
 
-    merged_model = model.merge_and_unload()
-    merged_model.save_pretrained(MERGED_OUTPUT_DIR)
-    tokenizer.save_pretrained(MERGED_OUTPUT_DIR)
+prompt = (
+    "<start_of_turn>user\n"
+    "CREATE TABLE employees(id, name, salary);\n\n"
+    "Find average salary.\n"
+    "<start_of_turn>model\n"
+)
 
-    export_training_curve(trainer.state.log_history)
+inputs = tokenizer(prompt, return_tensors="pt").to("cuda")
 
-    print(f"LoRA adapter saved to {LORA_OUTPUT_DIR}")
-    print(f"Merged model saved to {MERGED_OUTPUT_DIR}")
-    print(f"Training curve CSV saved to {TRAINING_CURVE_CSV}")
-    print(f"Training curve plot saved to {TRAINING_CURVE_PNG}")
+outputs = merged.generate(
+    **inputs,
+    max_new_tokens=100,
+    do_sample=False
+)
 
-
-if __name__ == "__main__":
-    main()
+print(tokenizer.decode(outputs[0], skip_special_tokens=True))

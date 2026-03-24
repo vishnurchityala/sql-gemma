@@ -200,3 +200,48 @@ Loading and Saving Dataset in TSV format
 # plt.savefig(plot_path)
 
 # plot_path
+
+""" Loading Finetuned Model """
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+model_path = "./weights/gemma3_1b_sql_full"
+
+tokenizer = AutoTokenizer.from_pretrained(model_path)
+
+device = "mps" if torch.backends.mps.is_available() else "cpu"
+
+model = AutoModelForCausalLM.from_pretrained(
+    model_path,
+    torch_dtype=torch.float32,
+).to(device)
+
+model.eval()
+
+prompt = (
+    "<start_of_turn>user\n"
+    "CREATE TABLE customers(id INT, name TEXT);\n"
+    "CREATE TABLE orders(id INT, customer_id INT, order_date DATE);\n"
+    "CREATE TABLE order_items(id INT, order_id INT, product_id INT, quantity INT);\n"
+    "CREATE TABLE products(id INT, name TEXT, price FLOAT);\n\n"
+    
+    "Find the names of customers who have spent more than 500 in total across all their orders.\n"
+    "Return customer name and total spending.\n"
+    
+    "<start_of_turn>model\n"
+)
+
+inputs = tokenizer(prompt, return_tensors="pt").to(device)
+
+outputs = model.generate(
+    **inputs,
+    max_new_tokens=120,
+    do_sample=False
+)
+
+response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+result = response.split("<start_of_turn>model")[-1].strip()
+
+print("\n===== MODEL OUTPUT =====\n")
+print(result)

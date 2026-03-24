@@ -69,3 +69,5 @@ kaggle.json
 .env
 /results
 /fine_tuned_gemma_sql
+upload.py
+/weights
