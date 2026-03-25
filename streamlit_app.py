@@ -14,6 +14,7 @@ from src.sql_gemma.sql_gemma_runtime import SQLGemmaRuntime
 from src.sql_gemma.sql_prompt_builder import SQL_SYSTEM_PROMPT, build_sql_user_prompt
 
 DIAGRAM_PATH = Path("img/multi-model-sql-agent.png")
+SAMPLE_CONTEXT_PATH = Path("context.sample.md")
 SQL_MODEL_URL = "https://huggingface.co/vishnurchityala/sql-gemma3"
 GEMINI_MODEL_URL = "https://deepmind.google/models/gemini/flash/"
 
@@ -101,7 +102,19 @@ def main() -> None:
     left_col, right_col = st.columns([1.7, 1], gap="large")
 
     with left_col:
-        uploaded = st.file_uploader("Upload context.md", type=["md"])
+        context_source = st.radio(
+            "Context Source",
+            options=["Upload context.md", "Use sample context"],
+            horizontal=True,
+        )
+        uploaded = None
+        if context_source == "Upload context.md":
+            uploaded = st.file_uploader("Upload context.md", type=["md"])
+        else:
+            st.info(f"Using sample context from `{SAMPLE_CONTEXT_PATH}`")
+            if SAMPLE_CONTEXT_PATH.exists():
+                with st.expander("Preview sample context"):
+                    st.code(SAMPLE_CONTEXT_PATH.read_text(encoding="utf-8"), language="markdown")
         question = st.text_area(
             "Ask a SQL question",
             height=140,
@@ -131,8 +144,16 @@ def main() -> None:
             st.image(str(DIAGRAM_PATH), caption="Model architecture", use_container_width=True)
 
     context_text: str | None = None
-    if uploaded:
-        context_text = uploaded.read().decode("utf-8")
+    if context_source == "Upload context.md":
+        if uploaded is not None:
+            context_text = uploaded.read().decode("utf-8")
+    else:
+        if SAMPLE_CONTEXT_PATH.exists():
+            context_text = SAMPLE_CONTEXT_PATH.read_text(encoding="utf-8")
+        else:
+            st.error(f"Sample context file not found: `{SAMPLE_CONTEXT_PATH}`")
+
+    if context_text:
         current_hash = _hash_text(context_text)
 
         if st.session_state["context_hash"] != current_hash:
@@ -202,8 +223,8 @@ def main() -> None:
 
     if generate_clicked:
         summary = st.session_state["context_summary"]
-        if not uploaded:
-            st.error("Upload a context.md file first.")
+        if not context_text:
+            st.error("Provide a context file or choose sample context first.")
             return
         if st.session_state["context_error"]:
             st.error("Fix context.md parsing issues before generating SQL.")
