@@ -47,3 +47,81 @@ Whereas Instruction LLM model is a Base LLM finetuned on instructions data where
 - https://huggingface.co/datasets/gretelai/synthetic_text_to_sql
 - https://huggingface.co/blog/gemma-peft
 - https://github.com/google-gemini/gemma-cookbook/tree/main/Gemma
+
+## Multi-Model Inference App
+
+This repo now includes a local Streamlit app that uses two models:
+
+- `gemini-3-flash-preview` for parsing and summarizing uploaded `context.md`
+- `vishnurchityala/sql-gemma3` for SQL query generation only
+
+### Architecture
+
+1. Upload `context.md` in the Streamlit UI.
+2. Gemini summarizes schema, relationships, and rules into a structured object.
+3. The app validates that structure.
+4. SQL-Gemma receives the normalized context and user question.
+5. A sanitizer enforces a single read-only SQL statement.
+6. The app returns SQL only.
+
+### Run the App
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+Set your Google API key (required for Gemini summarization) in `.env`:
+
+```bash
+echo "GOOGLE_API_KEY=your_api_key_here" >> .env
+```
+
+Launch Streamlit:
+
+```bash
+streamlit run streamlit_app.py
+```
+
+### `context.md` Template
+
+Use a markdown file with clear schema details, for example:
+
+```md
+# Overview
+HR analytics schema.
+
+# Dialect
+PostgreSQL
+
+# Tables
+## employees
+Description: Employee records
+Columns:
+- id
+- name
+- department
+- salary
+
+## departments
+Description: Department budgets
+Columns:
+- department
+- budget
+
+# Relationships
+- employees.department = departments.department
+
+# Rules
+- Return one read-only SQL query.
+- Do not use markdown fences in SQL output.
+```
+
+You can also start with the included sample file: `context.sample.md`.
+
+### Notes
+
+- First run can be slow due to model downloads.
+- SQL is generated but not executed in this version.
+- The app is designed for local development and single-turn generation.

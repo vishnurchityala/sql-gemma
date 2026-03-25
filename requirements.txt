@@ -1,8 +1,15 @@
 accelerate
 bitsandbytes
 datasets
+google-genai
+langchain
+langchain-core
+langchain-google-genai
 matplotlib
 pandas
+pydantic
+python-dotenv
+streamlit
 torch
 transformers
 trl
